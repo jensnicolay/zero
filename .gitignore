@@ -1,0 +1,13 @@
+/deploy.sh
+/*.dot
+*.rkt~
+
+*.rkt#1#
+
+*.dep
+
+*.zo
+
+compiled/*
+
+*.cache-3
