@@ -65,31 +65,26 @@
     ((«quo» _ e) (not (pair? e))) 
     (_ #f)))
 
-(define (free e)
-  (define (f e env)
-    (match e
-      ((«id» _ x) (if (set-member? env x)
-                      (set)
-                      (set x)))
-      ((«lam» _ x e) (f e (set-union env (list->set (map «id»-x x)))))
-      ((«let» _ x e0 e1) (set-union (f e0 env) (f e1 (set-add env («id»-x x)))))
-      ((«letrec» _ x e0 e1) (set-union (f e0 (set-add env («id»-x x))) (f e1 (set-add env («id»-x x)))))
-      ((«if» _ ae e1 e2) (set-union (f ae env) (f e1 env) (f e2 env)))
-      ((«set!» _ x ae) (set-union (f x env) (f ae env)))
-      ((«car» _ x) (f x env))
-      ((«cdr» _ x) (f x env))
-      ((«set-car!» _ x ae) (set-union (f x env) (f ae env)))
-      ((«set-cdr!» _ x ae) (set-union (f x env) (f ae env)))
-      ((«cons» _ ae1 ae2) (set-union (f ae1 env) (f ae2 env)))
-      ((«make-vector» _ ae1 ae2) (set-union (f ae1 env) (f ae2 env)))
-      ((«vector-ref» _ x ae) (set-union (f x env) (f ae env)))
-      ((«vector-set!» _ x ae1 ae2) (set-union (f x env) (f ae1 env) (f ae2 env)))
-      ((«quo» _ _) (set))
-      ((«app» _ rator rands) (set-union (f rator env) (for/fold ((xs (set))) ((rand rands)) (set-union xs (f rand env)))))
-      ((«id» _ _) (set))
-      ((«lit» _ _) (set))
-      (_ (error "cannot handle expression" e))))
-  (f e (set)))
+(define (tail e)
+  (match e
+    ((«id» _ _) e)
+    ((«lit» _ _) e)
+    ((«lam» _ _ e) (tail e))
+    ((«let» _ _ _ e) (tail e))
+    ((«letrec» _ _ _ e) (tail e))
+    ((«if» _ e _ _) (tail e))
+    ((«set!» _ _ e) (tail e))
+    ((«app» _ e es) (tail (last (cons e es))))
+    ((«car» _ e) (tail e))
+    ((«cdr» _ e) (tail e))
+    ((«set-car!» _ _ e) (tail e))
+    ((«set-cdr!» _ _ e) (tail e))
+    ((«cons» _ _ e) (tail e))
+    ((«make-vector» _ _ e) (tail e))
+    ((«vector-ref» _ _ e) (tail e))
+    ((«vector-set!» _ _ _ e) (tail e))
+    ((«quo» _ e) (tail e))
+    (_ (error "cannot handle expression" e))))
 
 (define (children e)
   (match e
@@ -167,21 +162,32 @@
       (eval (string->symbol x) ns))
 
     (define (lookup-var x e κ)
+      ;(printf "lookup ~a ~a ~a\n" x e κ)
       (match e
         ((«set!» _ («id» _ (== x)) e0)
          (eval0** e0 κ))
         ((«if» _ ae e0 e1)
          (let ((d (eval0** ae κ)))
            (lookup-var x (if d e0 e1) κ)))
+        ((«app» _ e0 _)
+         (let ((d (eval0** e0 κ)))
+           (match d
+             ((clo («lam» _ _ e1))
+              (lookup-var x e1 (cons e κ)))
+             (_ (lookup-var-pred x e κ)))))
+        ((«begin» _ es)
+         (lookup-var x (last es) κ))
         (_ (lookup-var-pred x e κ))))
 
     (define (lookup-var-pred x e κ)
+      ;(printf "pred ~a ~a ~a\n" x (pred e) κ)
       (let ((pr (pred e)))
         (if pr
             (lookup-var x pr κ)
             (lookup-var-parent x e κ))))
             
     (define (lookup-var-parent x e κ)
+      ;(printf "parent ~a ~a ~a\n" x (parent e) κ)
       (let ((pa (parent e)))
         (match pa
           ((«let» _ _ (== e) _)
@@ -193,10 +199,18 @@
           ((«lam» _ xs _)
            (let param-loop ((xs xs) (es («app»-aes (car κ))))
              (if (null? xs)
-                 (lookup-var-pred x pa κ)
+                 (lookup-var-pred x pa κ) ; or parent
                  (if (equal? («id»-x (car xs)) x)
                      (eval0** (car es) (cdr κ))
                      (param-loop (cdr xs) (cdr es))))))
+          ((«set!» _ («id» _ (== x)) e0)
+           (eval0** e0 κ))
+;          ((«app» _ e0 _)
+;           (let ((d (eval0** e0 κ)))
+;             (match d
+;               ((clo («lam» _ _ e1))
+;                (lookup-var x e1 (cons pa κ)))
+;               (_ (lookup-var-pred x pa κ)))))
           (#f (global-lookup x))
           (_ (lookup-var-pred x pa κ)))))
     
@@ -213,11 +227,11 @@
         ((«begin» _ es)
          (eval0** (last es) κ))
         ((«app» _ ae aes)
-         (let ((rator (eval0** ae κ)))
-           (match rator
+         (let ((d (eval0** ae κ)))
+           (match d
              ((clo («lam» _ _ e*))
               (eval0** e* (cons e κ)))
-             (_ (apply rator (map (lambda (ae) (eval0** ae κ)) aes))))))
+             (_ (apply d (map (lambda (ae) (eval0** ae κ)) aes))))))
         (_ (error "cannot handle expression" e))))
 
     (eval0** e '()))
@@ -250,6 +264,8 @@
 (add-test! '(letrec ((fib (lambda (n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2))))))) (fib 3)) 2)
 (add-test! 'x 'FAIL)
 (add-test! '(let ((f (lambda () f))) (f)) 'FAIL)
+(add-test! '(let ((x #t)) (let ((f (lambda () (set! x #f)))) (f) x)) #f)
+(add-test! '(let ((x #t)) (let ((g (lambda () (set! x #f)))) (let ((f (lambda (h) (h)))) (f g) x))) #f)
 (for ((test tests))
      (let ((result
             (with-handlers ((exn:fail?
