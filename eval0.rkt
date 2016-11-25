@@ -449,9 +449,12 @@
 (test '(let ((x 123)) (let ((y (set! x (set! x 456)))) x)) 'undefined)
 (test '(let ((x 123)) (let ((y (set! x (begin (set! x 456) 789)))) x)) 789)
 
-; cons-car-cdr
+; cons-car-cdr-!
 (test '(cons 1 2) (cons 1 2))
 (test '(let ((o (cons 1 2))) (car o)) 1)
 (test '(let ((o (cons 1 2))) (cdr o)) 2)
 (test '(let ((o (cons 1 (cons 2 3)))) (car (cdr o))) 2)
 (test '(let ((o (cons 1 (cons 2 3)))) (let ((v (cdr o))) (cdr v))) 3)
+(test '(let ((o (cons 1 2))) (set-car! o 3) (car o)) 3)
+;(test '(let ((o (cons 1 2))) (set-cdr! o 3) (cdr o)) 3)
+;(test '(let ((o (cons 1 2))) (let ((v o)) (set-car! v 3) (car o))) 3)
